@@ -1,16 +1,31 @@
 
-.PHONY: dev backend frontend
+.PHONY: dev backend frontend clean
 
-dev:
+# Variables
+PORT_BACKEND = 9000
+PORT_FRONTEND = 8501
+
+dev: clean
 	@echo "Starting FastAPI + Streamlit..."
-	@# Using a trap to kill background processes on exit is good practice but for simplicity we stick to the user's snippet logic
-	@# running in background with &
-	uv run uvicorn main:app --reload --host 0.0.0.0 --port 9000 & \
-	uv run streamlit run app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true --browser.gatherUsageStats=false
+ifeq ($(OS),Windows_NT)
+	@cmd /c start /B uv run uvicorn main:app --reload --host 0.0.0.0 --port $(PORT_BACKEND)
+	@uv run streamlit run app.py --server.address=0.0.0.0 --server.port=$(PORT_FRONTEND) --server.headless=true --browser.gatherUsageStats=false
+else
+	@uv run uvicorn main:app --reload --host 0.0.0.0 --port $(PORT_BACKEND) & \
+	uv run streamlit run app.py --server.address=0.0.0.0 --server.port=$(PORT_FRONTEND) --server.headless=true --browser.gatherUsageStats=false
+endif
 
 backend:
-	uv run uvicorn main:app --reload --host 0.0.0.0 --port 9000
+	uv run uvicorn main:app --reload --host 0.0.0.0 --port $(PORT_BACKEND)
 
 frontend:
-	uv run streamlit run app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true --browser.gatherUsageStats=false
+	uv run streamlit run app.py --server.address=0.0.0.0 --server.port=$(PORT_FRONTEND) --server.headless=true --browser.gatherUsageStats=false
+
+clean:
+	@echo "Cleaning up ports $(PORT_BACKEND) and $(PORT_FRONTEND)..."
+ifeq ($(OS),Windows_NT)
+	@powershell -Command "Get-NetTCPConnection -LocalPort $(PORT_BACKEND),$(PORT_FRONTEND) -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $$_.OwningProcess -Force }" 2>nul || exit 0
+else
+	@fuser -k $(PORT_BACKEND)/tcp $(PORT_FRONTEND)/tcp 2>/dev/null || true
+endif
 
