@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "apscheduler>=3.11.2",
     "azure-communication-email>=1.1.0",
     "fastapi>=0.128.0",
     "fastexcel>=0.18.0",
@@ -14,6 +15,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.21",
     "requests>=2.32.5",
+    "sseclient-py>=1.9.0",
     "streamlit>=1.53.0",
     "uvicorn>=0.40.0",
     "websocket-client>=1.8.0",
