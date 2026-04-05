@@ -521,9 +521,12 @@ elif "Schedule" in page:
 
     with st.form("schedule_form", clear_on_submit=False):
         st.markdown('<div class="section-label">Campaign Info</div>', unsafe_allow_html=True)
-        col_name, col_day = st.columns(2)
+        col_name, col_day, col_tz = st.columns([3, 2, 2])
         campaign_name = col_name.text_input("Campaign Name", placeholder="e.g. May Newsletter")
         campaign_day  = col_day.date_input("Send Date", value=date.today())
+        
+        common_tzs = ["UTC", "Asia/Kolkata", "America/New_York", "Europe/London", "Asia/Dubai", "Australia/Sydney"]
+        campaign_tz = col_tz.selectbox("Timezone", options=common_tzs, index=0)
 
         st.markdown('<div class="section-label">Files</div>', unsafe_allow_html=True)
         c1, c2 = st.columns(2)
@@ -600,6 +603,7 @@ elif "Schedule" in page:
             form_data = {
                 "name":    campaign_name,
                 "day":     str(campaign_day),
+                "timezone": campaign_tz,
                 "windows": json.dumps(windows_data),   # JSON-encoded list
             }
 

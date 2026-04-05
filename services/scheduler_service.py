@@ -9,6 +9,7 @@ import logging
 import math
 import random
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -32,6 +33,8 @@ _scheduler: AsyncIOScheduler | None = None
 
 # Global broadcast queues: schedule_id -> list of asyncio.Queue (SSE listeners)
 _listeners: dict[str, list[asyncio.Queue]] = {}
+
+_send_semaphore = asyncio.Semaphore(20)
 
 
 def register_listener(schedule_id: str, q: asyncio.Queue):
@@ -61,14 +64,23 @@ async def _broadcast(schedule_id: str, event: dict):
 
 async def _tick():
     """Runs every 60 s. Checks all active/pending schedules."""
-    now = datetime.now()
-    today_str = now.strftime("%Y-%m-%d")
-    now_time  = now.strftime("%H:%M")
+    now_utc = datetime.now(ZoneInfo("UTC"))
 
     schedules = get_all_schedules()
     for sched in schedules:
         if sched["status"] in ("done", "error"):
             continue
+
+        # Get current time in schedule's timezone
+        tz_name = sched.get("timezone", "UTC")
+        try:
+            now_tz = now_utc.astimezone(ZoneInfo(tz_name))
+        except Exception:
+            now_tz = now_utc # fallback
+
+        today_str = now_tz.strftime("%Y-%m-%d")
+        now_time  = now_tz.strftime("%H:%M")
+
         if sched["day"] != today_str:
             continue
 
@@ -95,7 +107,7 @@ async def _tick():
                 next_at_str = last_log["next_batch_at"]
                 if next_at_str:
                     next_at = datetime.fromisoformat(next_at_str)
-                    if now < next_at:
+                    if now_tz < next_at:
                         continue
                 next_batch = last_log["batch_number"] + 1
             else:
@@ -114,36 +126,42 @@ async def _tick():
             template_str = sched["template_str"]
             sent = failed = 0
 
-            for em in emails:
-                try:
-                    extra = json.loads(em["extra_data"])
-                    extra["email"]   = em["recipient_email"]
-                    extra["subject"] = em["subject"]
-                    html_body = render_template(template_str, extra)
-                    await send_email(em["recipient_email"], em["subject"], html_body)
-                    mark_email(em["id"], "sent")
-                    sent += 1
-                    await _broadcast(sched["id"], {
-                        "type": "progress",
-                        "email": em["recipient_email"],
-                        "status": "sent",
-                        "batch": next_batch,
-                        "window": f"{win['start_time']}–{win['end_time']}",
-                    })
-                except Exception as exc:
-                    mark_email(em["id"], "failed", str(exc))
-                    failed += 1
-                    await _broadcast(sched["id"], {
-                        "type": "progress",
-                        "email": em["recipient_email"],
-                        "status": "failed",
-                        "error": str(exc),
-                        "batch": next_batch,
-                        "window": f"{win['start_time']}–{win['end_time']}",
-                    })
+            async def send_one(em):
+                async with _send_semaphore:
+                    try:
+                        extra = json.loads(em["extra_data"])
+                        extra["email"]   = em["recipient_email"]
+                        extra["subject"] = em["subject"]
+                        html_body = render_template(template_str, extra)
+                        await send_email(em["recipient_email"], em["subject"], html_body)
+                        mark_email(em["id"], "sent")
+                        await _broadcast(sched["id"], {
+                            "type": "progress",
+                            "email": em["recipient_email"],
+                            "status": "sent",
+                            "batch": next_batch,
+                            "window": f"{win['start_time']}–{win['end_time']}",
+                        })
+                        return True
+                    except Exception as exc:
+                        mark_email(em["id"], "failed", str(exc))
+                        await _broadcast(sched["id"], {
+                            "type": "progress",
+                            "email": em["recipient_email"],
+                            "status": "failed",
+                            "error": str(exc),
+                            "batch": next_batch,
+                            "window": f"{win['start_time']}–{win['end_time']}",
+                        })
+                        return False
+
+            tasks = [send_one(em) for em in emails]
+            results = await asyncio.gather(*tasks)
+            sent = sum(1 for r in results if r)
+            failed = len(results) - sent
 
             jitter_secs = int(win["interval_secs"] * random.uniform(0.8, 1.2))
-            next_at = (now + timedelta(seconds=jitter_secs)).isoformat()
+            next_at = (now_tz + timedelta(seconds=jitter_secs)).isoformat()
             log_batch(sched["id"], win["id"], next_batch, sent, failed, next_at)
 
             logger.info(

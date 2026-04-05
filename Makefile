@@ -1,5 +1,5 @@
 
-.PHONY: dev backend frontend clean
+.PHONY: dev backend frontend clean release
 
 # Variables
 PORT_BACKEND = 9000
@@ -28,4 +28,11 @@ ifeq ($(OS),Windows_NT)
 else
 	@fuser -k $(PORT_BACKEND)/tcp $(PORT_FRONTEND)/tcp 2>/dev/null || true
 endif
+
+# Usage: make release VERSION=v1.2.0
+release:
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=v1.0.0"; exit 1; fi
+	@echo "Tagging $(VERSION) and pushing to trigger GitHub Actions release build..."
+	git tag $(VERSION)
+	git push origin $(VERSION)
 

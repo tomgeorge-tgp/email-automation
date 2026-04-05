@@ -1,0 +1,144 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Build packages for each platform ───────────────────────────────────────
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            uv_url: https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip
+            uv_bin: uv.exe
+            pkg: email-sender-windows
+            ext: zip
+
+          - os: ubuntu-latest
+            uv_url: https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz
+            uv_bin: uv
+            pkg: email-sender-linux
+            ext: tar.gz
+
+          - os: macos-latest
+            uv_url: https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz
+            uv_bin: uv
+            pkg: email-sender-macos
+            ext: tar.gz
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Download uv binary for this platform ─────────────────────────────
+      - name: Download uv (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${{ matrix.uv_url }}" -OutFile uv_dl.zip
+          Expand-Archive uv_dl.zip -DestinationPath uv_dl
+          $bin = Get-ChildItem -Recurse -Filter "uv.exe" uv_dl | Select-Object -First 1
+          Copy-Item $bin.FullName uv.exe
+
+      - name: Download uv (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "${{ matrix.uv_url }}" | tar -xz --wildcards "*/uv" --strip-components=1
+          chmod +x uv
+
+      # ── Assemble the package folder ───────────────────────────────────────
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pkg = "${{ matrix.pkg }}"
+          New-Item -ItemType Directory -Path $pkg | Out-Null
+          # source files
+          Copy-Item main.py, app.py, pyproject.toml, uv.lock, run.bat $pkg/
+          Copy-Item .env.example $pkg/
+          Copy-Item services   $pkg/ -Recurse
+          Copy-Item .streamlit $pkg/ -Recurse
+          # bundled uv
+          Copy-Item uv.exe $pkg/
+          # zip it up
+          Compress-Archive "$pkg\*" "$pkg.zip"
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          PKG="${{ matrix.pkg }}"
+          mkdir -p "$PKG"
+          cp main.py app.py pyproject.toml uv.lock run.sh .env.example "$PKG/"
+          cp -r services .streamlit "$PKG/"
+          cp uv "$PKG/"
+          chmod +x "$PKG/run.sh"
+          tar -czf "$PKG.tar.gz" "$PKG"
+
+      # ── Upload as artifact for the release job ────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.pkg }}
+          path: |
+            ${{ matrix.pkg }}.zip
+            ${{ matrix.pkg }}.tar.gz
+          if-no-files-found: ignore
+
+  # ── Create GitHub Release with all packages ─────────────────────────────────
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            email-sender-windows.zip
+            email-sender-linux.tar.gz
+            email-sender-macos.tar.gz
+          body: |
+            ## 📧 Bulk Email Sender — ${{ github.ref_name }}
+
+            ### Windows
+            1. Download **`email-sender-windows.zip`** and extract it anywhere
+            2. Double-click **`run.bat`**
+            3. On first run, fill in your Azure credentials in the `.env` file that opens automatically
+            4. Browser opens at **http://localhost:8501**
+
+            ### macOS
+            1. Download and extract **`email-sender-macos.tar.gz`**
+            2. Open Terminal in that folder and run:
+               ```
+               ./run.sh
+               ```
+            3. On first run, fill in your Azure credentials in `.env`
+
+            ### Linux
+            1. Download and extract **`email-sender-linux.tar.gz`**
+            2. Run:
+               ```
+               ./run.sh
+               ```
+            3. On first run, fill in your Azure credentials in `.env`
+
+            ---
+            **No Python installation required** — `uv` is bundled and handles everything automatically.
+
+            ### Azure credentials needed
+            | Variable | Where to find it |
+            |---|---|
+            | `ACS_CONNECTION_STRING` | Azure Portal → Communication Services → Keys |
+            | `ACS_SENDER_EMAIL` | Azure Portal → Communication Services → Email → Domains |

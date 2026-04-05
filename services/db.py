@@ -30,18 +30,27 @@ def get_conn():
 
 def init_db():
     with get_conn() as conn:
-        conn.executescript("""
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS schedules (
             id              TEXT PRIMARY KEY,
             name            TEXT NOT NULL,
             day             TEXT NOT NULL,           -- YYYY-MM-DD
+            timezone        TEXT NOT NULL DEFAULT 'UTC',
             template_str    TEXT NOT NULL,
             total_emails    INTEGER NOT NULL DEFAULT 0,
             status          TEXT NOT NULL DEFAULT 'pending',  -- pending/active/paused/done/error
             created_at      TEXT NOT NULL,
             updated_at      TEXT NOT NULL
-        );
+        )
+        """)
+        
+        # Migration for existing databases
+        try:
+            conn.execute("ALTER TABLE schedules ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'")
+        except sqlite3.OperationalError:
+            pass # already exists
 
+        conn.executescript("""
         CREATE TABLE IF NOT EXISTS time_windows (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             schedule_id     TEXT NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
@@ -83,13 +92,13 @@ def init_db():
 
 # ── Schedule CRUD ─────────────────────────────────────────────────────────────
 
-def create_schedule(schedule_id: str, name: str, day: str, template_str: str, total_emails: int):
+def create_schedule(schedule_id: str, name: str, day: str, template_str: str, total_emails: int, timezone: str = "UTC"):
     now = datetime.now().isoformat()
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO schedules (id, name, day, template_str, total_emails, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
-            (schedule_id, name, day, template_str, total_emails, now, now),
+            "INSERT INTO schedules (id, name, day, timezone, template_str, total_emails, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (schedule_id, name, day, timezone, template_str, total_emails, now, now),
         )
 
 

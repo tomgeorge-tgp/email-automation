@@ -146,6 +146,7 @@ async def create_schedule_api(
     name: str    = Form(..., description="Campaign display name"),
     day: str     = Form(..., description="Send date as YYYY-MM-DD"),
     windows: str = Form(..., description="JSON array of window objects"),
+    timezone: str = Form("UTC", description="Timezone name, e.g. Asia/Kolkata"),
     template_file: UploadFile = File(...),
     excel_file:    UploadFile = File(...),
 ):
@@ -248,7 +249,7 @@ async def create_schedule_api(
     # ── 7. Build schedule in DB ───────────────────────────────────────────────
     schedule_id = uuid.uuid4().hex
     try:
-        create_schedule(schedule_id, name, day, template_str, total_assigned)
+        create_schedule(schedule_id, name, day, template_str, total_assigned, timezone)
 
         all_rows = users_df.to_dicts()
         cursor   = 0
